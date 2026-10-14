@@ -1,211 +1,109 @@
 package com.yuuuno224.bilimusic.repo;
 
-import android.os.Handler;
-import android.os.Looper;
+import com.yuuuno224.bilimusic.core.AppExecutors;
+import com.yuuuno224.bilimusic.model.FavoriteFolder;
+import com.yuuuno224.bilimusic.model.Song;
+import com.yuuuno224.bilimusic.net.api.FavoriteApi;
+import com.yuuuno224.bilimusic.net.api.SearchApi;
 
-import com.yuuuno224.bilimusic.net.BiliApi;
-import com.yuuuno224.bilimusic.model.FavData;
-import com.yuuuno224.bilimusic.model.RecommendData;
-import com.yuuuno224.bilimusic.model.SearchData;
-import com.yuuuno224.bilimusic.model.ViewData;
-import com.yuuuno224.bilimusic.model.PlayData;
-import com.yuuuno224.bilimusic.store.Song;
-
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Callable;
 
-/** 音乐业务编排：搜索 → cid 解析 → 播放地址解析（串行IO，防风控） */
+/**
+ * 界面与网络之间的中间层。
+ *
+ * <h3>它到底解决什么问题</h3>
+ * 界面代码有两个不能违反的约束：不能在主线程发网络请求，也不能在子线程改界面。
+ * 如果让每个 Fragment 自己处理这两件事，很快就会到处是
+ * {@code new Thread} + {@code runOnUiThread}，且每个页面的错误处理都不一样。
+ *
+ * <p>所以本类把"切线程 + 回调"这件事收敛成一个模式：
+ * <pre>
+ * AppExecutors.io().execute(() -&gt; {          // 1. 切到后台线程
+ *     T result = 调接口();                    //    同步阻塞的网络请求放这里
+ *     AppExecutors.runOnMain(() -&gt; ...);     // 2. 切回主线程回调界面
+ * });
+ * </pre>
+ * 每个公开方法都只是这个模板的填空，写法完全一致。
+ *
+ * <h3>为什么所有请求共用一个单线程池</h3>
+ * B 站有风控：短时间内并发太多请求会被判为异常，返回 412。
+ * 串行执行虽然慢一点，但稳定得多。真正的并行只发生在播放队列解析上，
+ * 那是 {@code player} 层自己的事（见 {@code core.AppExecutors#resolve()}）。
+ *
+ * <h3>方法约定</h3>
+ * 所有方法都是"发射后不管"：立刻返回，结果通过 {@link Callback} 回主线程。
+ * 回调可能在任何一次页面切换之后才到达，所以界面里必须判断
+ * {@code isAdded()} / {@code isFinishing()} 再用结果。
+ */
 public final class MusicRepository {
 
+    /** 统一的异步结果回调，<b>两个方法都在主线程被调用</b>。 */
     public interface Callback<T> {
-        void onResult(T result);
 
+        void onSuccess(T result);
+
+        /** @param message 已经是可以直接展示给用户的文案 */
         void onError(String message);
     }
-
-    private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "music-io");
-        t.setDaemon(true);
-        return t;
-    });
 
     private MusicRepository() {
     }
 
-    public static void search(String keyword, final Callback<List<Song>> cb) {
-        IO.execute(() -> {
-            try {
-                SearchData data = BiliApi.searchVideos(keyword, 1);
-                List<Song> songs = new ArrayList<>();
-                if (data != null && data.result != null) {
-                    for (SearchData.SearchItem item : data.result) {
-                        if (item.bvid == null || item.bvid.isEmpty()) {
-                            continue;
-                        }
-                        Song s = new Song(item.bvid, stripHtml(item.title), item.author, item.pic,
-                                parseDuration(item.duration));
-                        s.cover = item.pic;
-                        songs.add(s);
-                    }
-                }
-                MAIN.post(() -> cb.onResult(songs));
-            } catch (Exception e) {
-                MAIN.post(() -> cb.onError(e.getMessage() == null ? "搜索失败" : e.getMessage()));
-            }
-        });
+    /** 关键词搜索（第 1 页，每页 20 条）。 */
+    public static void search(String keyword, Callback<List<Song>> callback) {
+        run("搜索", () -> SearchApi.search(keyword, 1), callback);
     }
 
-    /** 热门搜索词（B站搜索广场接口） */
-    public static void hotWords(final Callback<List<String>> cb) {
-        IO.execute(() -> {
-            try {
-                List<String> words = BiliApi.hotSearchWords();
-                MAIN.post(() -> cb.onResult(words));
-            } catch (Exception e) {
-                MAIN.post(() -> cb.onError(e.getMessage() == null ? "获取热门搜索失败" : e.getMessage()));
-            }
-        });
+    /** 搜索首页的热门搜索词。 */
+    public static void hotWords(Callback<List<String>> callback) {
+        run("获取热门搜索", SearchApi::hotWords, callback);
     }
 
-    /** 音乐区排行榜（B站音乐区热门视频） */
-    public static void musicRanking(final Callback<List<Song>> cb) {
-        IO.execute(() -> {
-            try {
-                List<RecommendData.RankItem> items = BiliApi.musicRanking();
-                List<Song> songs = new ArrayList<>();
-                for (RecommendData.RankItem item : items) {
-                    if (item.bvid == null || item.bvid.isEmpty()) {
-                        continue;
-                    }
-                    String up = item.author != null ? item.author : "";
-                    Song s = new Song(item.bvid, stripHtml(item.title), up, item.pic,
-                            parseDuration(item.duration));
-                    songs.add(s);
-                }
-                MAIN.post(() -> cb.onResult(songs));
-            } catch (Exception e) {
-                MAIN.post(() -> cb.onError(e.getMessage() == null ? "获取排行榜失败" : e.getMessage()));
-            }
-        });
+    /** 搜索首页的音乐区排行榜。 */
+    public static void musicRanking(Callback<List<Song>> callback) {
+        run("获取排行榜", SearchApi::musicRanking, callback);
     }
 
-    /** 加载用户收藏夹列表（需要登录） */
-    public static void favFolders(long mid, final Callback<List<FavData.Folder>> cb) {
-        IO.execute(() -> {
-            try {
-                FavData.FolderList data = BiliApi.favFolders(mid);
-                List<FavData.Folder> folders = new ArrayList<>();
-                if (data != null && data.list != null) {
-                    folders.addAll(data.list);
-                }
-                MAIN.post(() -> cb.onResult(folders));
-            } catch (Exception e) {
-                MAIN.post(() -> cb.onError(e.getMessage() == null ? "获取收藏夹失败" : e.getMessage()));
-            }
-        });
-    }
-
-    /** 加载收藏夹内全部视频（自动翻页，上限 10 页） */
-    public static void favResources(long mediaId, final Callback<List<Song>> cb) {
-        IO.execute(() -> {
-            try {
-                List<Song> songs = new ArrayList<>();
-                for (int page = 1; page <= 10; page++) {
-                    FavData.ResourceList data = BiliApi.favResources(mediaId, page);
-                    if (data.medias == null || data.medias.isEmpty()) {
-                        break;
-                    }
-                    for (FavData.Resource r : data.medias) {
-                        if (r.bvid == null || r.bvid.isEmpty()) {
-                            continue;
-                        }
-                        String up = r.upper != null ? r.upper.name : "";
-                        Song s = new Song(r.bvid, stripHtml(r.title), up, r.cover, r.duration);
-                        s.cid = r.cid;
-                        songs.add(s);
-                    }
-                    if (!data.has_more) {
-                        break;
-                    }
-                }
-                MAIN.post(() -> cb.onResult(songs));
-            } catch (Exception e) {
-                MAIN.post(() -> cb.onError(e.getMessage() == null ? "获取收藏内容失败" : e.getMessage()));
-            }
-        });
-    }
-
-    /** 解析 cid（搜索结果不携带 cid，需二次请求视频详情） */
-    public static void ensureCid(final Song song, final Callback<Song> cb) {
-        if (song.cid > 0) {
-            cb.onResult(song);
+    /**
+     * 某用户的收藏夹列表。
+     *
+     * @param mid 用户 uid；为 0 时会直接报错，调用方应先确保已登录并拿到用户信息
+     */
+    public static void favoriteFolders(long mid, Callback<List<FavoriteFolder>> callback) {
+        if (mid <= 0) {
+            callback.onError("未获取到用户信息，请重新登录");
             return;
         }
-        IO.execute(() -> {
+        run("获取收藏夹", () -> FavoriteApi.folders(mid), callback);
+    }
+
+    /** 某个收藏夹里的全部视频（内部会自动翻页，见 {@code FavoriteApi#allResources}）。 */
+    public static void favoriteResources(long mediaId, Callback<List<Song>> callback) {
+        run("获取收藏内容", () -> FavoriteApi.allResources(mediaId), callback);
+    }
+
+    /**
+     * 所有方法的公共骨架：后台执行 → 主线程回调。
+     *
+     * <p>用 {@link Callable} 而不是 {@code Runnable}，是为了能带回结果；
+     * 用 {@code Exception} 统一兜住 IO 异常和解析异常，界面永远只需要处理一句错误文案。
+     *
+     * @param errorLabel 出错且异常没带文案时的兜底提示，例如"搜索"
+     */
+    private static <T> void run(String errorLabel, Callable<T> task, Callback<T> callback) {
+        AppExecutors.io().execute(() -> {
             try {
-                ViewData view = BiliApi.videoDetail(song.bvid);
-                song.cid = view.cid;
-                if (song.durationSec <= 0) {
-                    song.durationSec = view.duration;
-                }
-                MAIN.post(() -> cb.onResult(song));
+                T result = task.call();
+                AppExecutors.runOnMain(() -> callback.onSuccess(result));
             } catch (Exception e) {
-                MAIN.post(() -> cb.onError(e.getMessage() == null ? "解析失败" : e.getMessage()));
+                String message = e.getMessage();
+                if (message == null || message.isEmpty()) {
+                    message = errorLabel + "失败，请检查网络后重试";
+                }
+                final String text = message;
+                AppExecutors.runOnMain(() -> callback.onError(text));
             }
         });
-    }
-
-    /** 解析最佳音频流地址 */
-    public static void resolveAudio(final Song song, final Callback<PlayData.AudioStream> cb) {
-        ensureCid(song, new Callback<Song>() {
-            @Override
-            public void onResult(Song s) {
-                IO.execute(() -> {
-                    try {
-                        PlayData.AudioStream audio = BiliApi.bestAudio(s.bvid, s.cid);
-                        MAIN.post(() -> cb.onResult(audio));
-                    } catch (Exception e) {
-                        MAIN.post(() -> cb.onError(e.getMessage() == null ? "获取音频失败" : e.getMessage()));
-                    }
-                });
-            }
-
-            @Override
-            public void onError(String message) {
-                cb.onError(message);
-            }
-        });
-    }
-
-    private static String stripHtml(String s) {
-        if (s == null) {
-            return "";
-        }
-        return s.replace("<em class=\"keyword\">", "")
-                .replace("</em>", "")
-                .replace("&quot;", "\"")
-                .replace("&amp;", "&")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("\n", " ");
-    }
-
-    private static long parseDuration(String d) {
-        if (d == null || d.isEmpty()) {
-            return 0;
-        }
-        try {
-            String[] parts = d.split(":");
-            long sec = 0;
-            for (String p : parts) {
-                sec = sec * 60 + Long.parseLong(p.trim());
-            }
-            return sec;
-        } catch (NumberFormatException e) {
-            return 0;
-        }
     }
 }
