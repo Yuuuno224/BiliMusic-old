@@ -20,3 +20,6 @@ captures/
 .codeartsdoer/
 .merkle-snapshot.json
 tools/api-probe/*.class
+tools/api-probe/out/
+# 探针程序的临时编译输出（见 docs/05-bilibili-api.md）
+.probe-out/

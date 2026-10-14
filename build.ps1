@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     BiliMusic 一键构建脚本（Windows PowerShell）。
 
@@ -24,16 +24,20 @@
     额外传给 Gradle 的参数，例如 '--info' 或 '--stacktrace'。
 
 .EXAMPLE
-    .\build.ps1
+    .\build.cmd
     构建 Debug APK，产物在 app\build\outputs\apk\debug\。
+    （推荐用 build.cmd：它内部带了 -ExecutionPolicy Bypass，
+      避免默认执行策略拒绝运行未签名的 .ps1。）
 
 .EXAMPLE
-    .\build.ps1 ci -GradleArgs '--stacktrace'
-    排查 CI 上构建失败时用。
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 assembleDebug -GradleArgs '--stacktrace'
+    排查构建失败时用：任务名直接写 Gradle 任务，额外参数走 -GradleArgs。
+    注意 Task 参数只把 debug / release / clean / wrapper 这四个词翻译成
+    assembleDebug / assembleRelease / clean / wrapper，其它值会原样传给 Gradle。
 
 .EXAMPLE
-    .\build.ps1 release
-    构建 Release APK。
+    .\build.cmd release
+    构建 Release APK（未签名）。
 #>
 param(
     [Parameter(Position = 0)]
@@ -128,9 +132,11 @@ if ($GradleArgs) {
 & $gradleWrapper @arguments
 $exitCode = $LASTEXITCODE
 
-if ($exitCode -eq 0) {
-    Write-Host "[build] 成功。产物目录：app\build\outputs\apk\" -ForegroundColor Green
-} else {
+if ($exitCode -ne 0) {
     Write-Host "[build] 失败（退出码 $exitCode）。加 -GradleArgs '--stacktrace' 可看到详细堆栈。" -ForegroundColor Red
+} elseif ($gradleTask -like 'assemble*' -or $gradleTask -like 'bundle*') {
+    Write-Host '[build] 成功。产物目录：app\build\outputs\apk\' -ForegroundColor Green
+} else {
+    Write-Host "[build] 成功。" -ForegroundColor Green
 }
 exit $exitCode

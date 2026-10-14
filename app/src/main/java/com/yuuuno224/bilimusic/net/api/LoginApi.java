@@ -1,6 +1,7 @@
 package com.yuuuno224.bilimusic.net.api;
 
 import com.google.gson.reflect.TypeToken;
+import com.yuuuno224.bilimusic.model.LoginState;
 import com.yuuuno224.bilimusic.model.UserProfile;
 import com.yuuuno224.bilimusic.net.BiliException;
 import com.yuuuno224.bilimusic.net.BiliHttp;
@@ -21,8 +22,8 @@ import java.nio.charset.StandardCharsets;
  * 登录相关接口：生成授权链接、轮询登录状态、读用户信息、退出登录。
  *
  * <h3>为什么要"轮询"</h3>
- * 扫码登录是两个设备的协作：手机上的 B 站 App 负责确认，本 App 负责等待。
- * B 站没有给推送通道，只能每隔约 2 秒问一次"用户确认了吗"，
+ * 登录是两个设备的协作：手机上的 B 站 App 负责确认，本 App 负责等待。
+ * B 站没有给客户端推送通道，只能每隔约 2 秒问一次"用户确认了吗"，
  * 这就是 {@link #poll} 存在的原因。{@code QrLoginActivity} 负责计时调用它。
  *
  * <h3>登录态到底是什么</h3>
@@ -31,15 +32,6 @@ import java.nio.charset.StandardCharsets;
  * {@link #poll} 会顺手存进 {@link CookieStore}，之后所有请求自动携带。
  */
 public final class LoginApi {
-
-    /** 等待用户扫码。 */
-    public static final int ST_WAITING = 86101;
-    /** 已扫码，等待用户在手机上点"确认"。 */
-    public static final int ST_SCANNED = 86090;
-    /** 二维码 / 链接已过期，需要重新生成。 */
-    public static final int ST_EXPIRED = 86038;
-    /** 登录成功。此时响应头里带着登录 Cookie。 */
-    public static final int ST_SUCCESS = 0;
 
     private static final String URL_QR_GENERATE =
             "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
@@ -66,7 +58,8 @@ public final class LoginApi {
      * @return 含 {@code url}（用户在手机上点开确认）和 {@code qrcodeKey}（后续轮询凭证）
      */
     public static QrLoginDto.Generate generate() throws IOException {
-        QrLoginDto.Generate data = BiliSession.get(URL_QR_GENERATE, TYPE_QR_GENERATE, "生成授权链接");
+        QrLoginDto.Generate data =
+                BiliSession.get(URL_QR_GENERATE, TYPE_QR_GENERATE, "生成授权链接");
         if (data == null || data.url == null || data.qrcodeKey == null) {
             throw new BiliException("授权链接生成失败：响应缺少 url 或 qrcode_key");
         }
@@ -80,16 +73,20 @@ public final class LoginApi {
      * 但<b>还没有落盘</b>——落盘由 {@code auth.AuthManager} 在确认成功后统一调用
      * {@link CookieStore#persist(android.content.Context)}，避免把中间态写进磁盘。
      *
-     * @return {@link #ST_SUCCESS} / {@link #ST_SCANNED} / {@link #ST_EXPIRED} / {@link #ST_WAITING}
+     * <p><b>注意这里有两层 code</b>：外层 {@code ApiResponse.code} 表示"接口调用成功没有"，
+     * 内层 {@code data.code} 才是"用户进行到哪一步了"。本方法返回的是内层。
+     *
+     * @return {@link LoginState#SUCCESS} / {@link LoginState#SCANNED} /
+     *         {@link LoginState#EXPIRED} / {@link LoginState#WAITING}
      */
     public static int poll(String qrcodeKey) throws IOException {
         BiliHttp.Response response =
                 BiliHttp.get(URL_QR_POLL + "?qrcode_key=" + qrcodeKey);
         ApiResponse<QrLoginDto.Poll> parsed = Json.parse(response.body, TYPE_QR_POLL);
         if (parsed.data == null) {
-            return ST_WAITING;
+            return LoginState.WAITING;
         }
-        if (parsed.data.code == ST_SUCCESS) {
+        if (parsed.data.code == LoginState.SUCCESS) {
             // 关键一步：登录 Cookie 不在响应体里，而在 Set-Cookie 响应头里
             CookieStore.putAll(
                     CookieStore.parseSetCookie(response.headerValues("Set-Cookie")));
@@ -113,7 +110,7 @@ public final class LoginApi {
         if (!parsed.ok()) {
             throw new BiliException(parsed.code, "获取用户信息失败：" + parsed.message);
         }
-        return UserProfile.from(parsed.data);
+        return toProfile(parsed.data);
     }
 
     /**
@@ -140,5 +137,24 @@ public final class LoginApi {
         } finally {
             conn.disconnect();
         }
+    }
+
+    /**
+     * dto → model 的翻译。
+     *
+     * <p>放在这里而不是 `UserProfile` 上，是为了让 {@code model} 保持零依赖：
+     * 一旦 `UserProfile` 认识 `NavDto`，{@code model} 就反过来依赖 {@code net.dto} 了。
+     */
+    private static UserProfile toProfile(NavDto dto) {
+        UserProfile profile = new UserProfile();
+        if (dto == null) {
+            return profile;
+        }
+        profile.isLogin = dto.isLogin;
+        profile.mid = dto.mid;
+        profile.uname = dto.uname;
+        profile.face = dto.face;
+        profile.level = dto.levelInfo != null ? dto.levelInfo.currentLevel : 0;
+        return profile;
     }
 }

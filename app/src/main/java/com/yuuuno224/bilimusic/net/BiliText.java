@@ -1,10 +1,14 @@
-package com.yuuuno224.bilimusic.util;
+package com.yuuuno224.bilimusic.net;
 
 /**
  * B 站返回文本的清洗与解析。
  *
- * <p>为什么单独一个类：这些规则都是"B 站接口的怪癖"，散落在各处会很难找。
- * 集中在这里，一旦 B 站改了返回格式，只需要改这一个文件。
+ * <p>为什么放在 {@code net} 而不是 {@code util}：这些规则都是"B 站接口的怪癖"，
+ * 属于对线上数据格式的知识，跟接口封装是同一件事。放在这里还有一个好处——
+ * {@code net.api} 用它可以保持在 {@code net} 内部，
+ * 不会出现 {@code util} 与 {@code net} 互相依赖的包级循环。
+ *
+ * <p>一旦 B 站改了返回格式，只需要改这一个文件。
  */
 public final class BiliText {
 

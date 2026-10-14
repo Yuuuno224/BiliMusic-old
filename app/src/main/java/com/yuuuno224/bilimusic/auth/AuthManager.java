@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.yuuuno224.bilimusic.core.AppExecutors;
+import com.yuuuno224.bilimusic.model.LoginState;
 import com.yuuuno224.bilimusic.model.UserProfile;
 import com.yuuuno224.bilimusic.net.CookieStore;
 import com.yuuuno224.bilimusic.net.Json;
@@ -39,7 +40,7 @@ public final class AuthManager {
         /**
          * 登录进度变化。
          *
-         * @param state 取值见 {@link LoginApi} 的 {@code ST_*} 常量
+         * @param state 取值见 {@link LoginState} 的常量
          */
         void onStatus(int state);
 
@@ -129,7 +130,7 @@ public final class AuthManager {
         AppExecutors.auth().execute(() -> {
             try {
                 int state = LoginApi.poll(qrcodeKey);
-                if (state != LoginApi.ST_SUCCESS) {
+                if (state != LoginState.SUCCESS) {
                     AppExecutors.runOnMain(() -> callback.onStatus(state));
                     return;
                 }

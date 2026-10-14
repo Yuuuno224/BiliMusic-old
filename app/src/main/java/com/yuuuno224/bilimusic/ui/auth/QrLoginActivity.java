@@ -15,8 +15,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.yuuuno224.bilimusic.R;
 import com.yuuuno224.bilimusic.auth.AuthManager;
 import com.yuuuno224.bilimusic.core.AppExecutors;
+import com.yuuuno224.bilimusic.model.LoginState;
 import com.yuuuno224.bilimusic.model.UserProfile;
-import com.yuuuno224.bilimusic.net.api.LoginApi;
 
 /**
  * 登录页：生成授权链接 → 用户去 B 站 App 确认 → 本页轮询直到成功。
@@ -164,7 +164,7 @@ public class QrLoginActivity extends AppCompatActivity {
                 if (isStale(myGeneration)) {
                     return;
                 }
-                if (state == LoginApi.ST_EXPIRED) {
+                if (state == LoginState.EXPIRED) {
                     // 链接过期：重新生成一条，旧的轮询由世代号作废
                     status.setText("授权已过期，正在重新生成…");
                     startLogin();
@@ -216,10 +216,10 @@ public class QrLoginActivity extends AppCompatActivity {
     }
 
     private static String statusTextOf(int state) {
-        if (state == LoginApi.ST_SCANNED) {
+        if (state == LoginState.SCANNED) {
             return "已在B站APP中确认，正在完成登录…";
         }
-        if (state == LoginApi.ST_EXPIRED) {
+        if (state == LoginState.EXPIRED) {
             return "授权已过期";
         }
         return "等待在B站APP中确认授权…";

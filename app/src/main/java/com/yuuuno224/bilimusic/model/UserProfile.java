@@ -1,7 +1,5 @@
 package com.yuuuno224.bilimusic.model;
 
-import com.yuuuno224.bilimusic.net.dto.NavDto;
-
 /**
  * 当前登录的 B 站用户。
  *
@@ -11,9 +9,13 @@ import com.yuuuno224.bilimusic.net.dto.NavDto;
  *   <li>缓存对象 —— 会被 Gson 序列化成 JSON 存进 SharedPreferences
  *       （{@code bili_auth} 的 {@code me} 键），这样冷启动时不用等网络就能显示上次的信息。</li>
  * </ol>
- * 注意它和 {@link NavDto} 的区别：{@code NavDto} 严格对应接口返回的嵌套结构
- * （{@code level_info.current_level}），而这里被拍平成了 {@link #level}，
- * 界面用起来更直接。两者之间的转换见 {@link #from(NavDto)}。
+ *
+ * <p>注意它和 {@code net.dto.NavDto} 的区别：{@code NavDto} 严格对应接口返回的嵌套结构
+ * （{@code level_info.current_level}），而这里被拍平成了 {@link #level}，界面用起来更直接。
+ * 两者之间的转换由 {@code net.api.LoginApi} 负责——
+ * <b>本类刻意不提供 {@code from(NavDto)} 这样的方法</b>，
+ * 否则 {@code model} 就得反过来依赖 {@code net.dto}，
+ * 而"model 不依赖任何层"是本项目最重要的一条分层规则。
  */
 public class UserProfile {
 
@@ -29,20 +31,6 @@ public class UserProfile {
 
     /** Gson 反序列化需要无参构造器。 */
     public UserProfile() {
-    }
-
-    /** 把接口数据翻译成界面模型（接口未登录时也要能安全转换）。 */
-    public static UserProfile from(NavDto dto) {
-        UserProfile profile = new UserProfile();
-        if (dto == null) {
-            return profile;
-        }
-        profile.isLogin = dto.isLogin;
-        profile.mid = dto.mid;
-        profile.uname = dto.uname;
-        profile.face = dto.face;
-        profile.level = dto.levelInfo != null ? dto.levelInfo.currentLevel : 0;
-        return profile;
     }
 
     /** 昵称，为空时给一个占位，避免界面上出现 "null"。 */

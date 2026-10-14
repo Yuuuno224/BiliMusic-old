@@ -4,9 +4,9 @@ import com.google.gson.reflect.TypeToken;
 import com.yuuuno224.bilimusic.model.FavoriteFolder;
 import com.yuuuno224.bilimusic.model.Song;
 import com.yuuuno224.bilimusic.net.BiliSession;
+import com.yuuuno224.bilimusic.net.BiliText;
 import com.yuuuno224.bilimusic.net.dto.ApiResponse;
 import com.yuuuno224.bilimusic.net.dto.FavoriteDto;
-import com.yuuuno224.bilimusic.util.BiliText;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
